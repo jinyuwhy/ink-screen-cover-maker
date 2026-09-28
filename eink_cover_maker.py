@@ -7,12 +7,13 @@ import re
 import threading
 import traceback
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import BooleanVar, DoubleVar, StringVar, Tk, filedialog, messagebox
+from tkinter import BooleanVar, DoubleVar, StringVar, Tk, Toplevel, filedialog, messagebox
 from tkinter import ttk
 
 from PIL import Image, ImageEnhance, ImageFilter, ImageGrab, ImageOps, ImageTk
@@ -37,6 +38,61 @@ DEVICE_PRESETS: dict[str, tuple[int, int] | None] = {
     "13.3英寸 300PPI": (2400, 3200),
     "自定义": None,
 }
+
+
+class ToolTip:
+    """A small delayed help bubble for compact toolbar controls."""
+
+    def __init__(self, widget, text: str, delay_ms: int = 450) -> None:
+        self.widget = widget
+        self.text = text
+        self.delay_ms = delay_ms
+        self._after_id: str | None = None
+        self._window: Toplevel | None = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, _event=None) -> None:
+        self._cancel()
+        self._after_id = self.widget.after(self.delay_ms, self._show)
+
+    def _cancel(self) -> None:
+        if self._after_id is not None:
+            self.widget.after_cancel(self._after_id)
+            self._after_id = None
+
+    def _show(self) -> None:
+        self._after_id = None
+        if self._window is not None or not self.widget.winfo_exists():
+            return
+        window = Toplevel(self.widget)
+        window.wm_overrideredirect(True)
+        window.wm_attributes("-topmost", True)
+        x = self.widget.winfo_rootx()
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        window.wm_geometry(f"+{x}+{y}")
+        ttk.Label(
+            window,
+            text=self.text,
+            justify="left",
+            padding=(9, 6),
+            relief="solid",
+            borderwidth=1,
+            wraplength=360,
+        ).pack()
+        self._window = window
+
+    def _hide(self, _event=None) -> None:
+        self._cancel()
+        if self._window is not None:
+            self._window.destroy()
+            self._window = None
+
+
+def add_tooltip(widget, text: str) -> None:
+    # Keep an explicit reference for the lifetime of the Tk widget.
+    widget._tooltip = ToolTip(widget, text)
 
 
 @dataclass(frozen=True)
@@ -151,6 +207,19 @@ def load_image_from_url(url: str) -> Image.Image:
     return ImageOps.exif_transpose(image).convert("RGB")
 
 
+def describe_url_error(url: str, error: Exception) -> str:
+    host = (urllib.parse.urlparse(url).hostname or "").casefold()
+    if host.endswith("doubanio.com") and isinstance(error, urllib.error.HTTPError):
+        return (
+            f"豆瓣图片服务器拒绝了这个图片链接（HTTP {error.code}）。\n\n"
+            "请回到浏览器，在封面图片上使用“复制图片”，不要使用“复制图片链接”；"
+            "也可以先保存图片，再通过“本地图片”打开。"
+        )
+    if isinstance(error, TimeoutError):
+        return "读取图片链接超时。请检查网络，或先保存图片后使用“本地图片”。"
+    return str(error)
+
+
 def make_wallpaper(
     source: Image.Image,
     layout: str,
@@ -235,14 +304,24 @@ class CoverMakerApp:
         entry.bind("<Return>", lambda _event: self.start_search())
         self.search_button = ttk.Button(search_bar, text="搜索封面", command=self.start_search)
         self.search_button.pack(side="left", padx=(8, 0))
-        ttk.Button(search_bar, text="粘贴封面", command=self.paste_cover).pack(
-            side="left", padx=(8, 0)
+        add_tooltip(self.search_button, "按书名在 Open Library 公开书库中搜索封面。")
+
+        self.paste_button = ttk.Button(search_bar, text="粘贴封面", command=self.paste_cover)
+        self.paste_button.pack(side="left", padx=(8, 0))
+        add_tooltip(
+            self.paste_button,
+            "读取剪贴板中的图片。建议在网页封面上选择“复制图片”，而不是“复制图片链接”；豆瓣图片直链可能被服务器拒绝。",
         )
-        ttk.Button(search_bar, text="本地图片", command=self.choose_local_image).pack(
-            side="left", padx=(8, 0)
-        )
-        ttk.Button(search_bar, text="网页查找", command=self.open_web_search).pack(
-            side="left", padx=(8, 0)
+
+        local_button = ttk.Button(search_bar, text="本地图片", command=self.choose_local_image)
+        local_button.pack(side="left", padx=(8, 0))
+        add_tooltip(local_button, "从电脑中选择已经下载或保存的封面图片。")
+
+        web_button = ttk.Button(search_bar, text="网页查找", command=self.open_web_search)
+        web_button.pack(side="left", padx=(8, 0))
+        add_tooltip(
+            web_button,
+            "在默认浏览器中打开豆瓣图书搜索。找到封面后，请复制图片本身，再回到这里点击“粘贴封面”。",
         )
 
         body = ttk.Panedwindow(outer, orient="horizontal")
@@ -397,6 +476,7 @@ class CoverMakerApp:
     def set_busy(self, busy: bool, text: str) -> None:
         self.status.set(text)
         self.search_button.configure(state="disabled" if busy else "normal")
+        self.paste_button.configure(state="disabled" if busy else "normal")
         self.root.configure(cursor="wait" if busy else "")
 
     def start_search(self) -> None:
@@ -456,7 +536,8 @@ class CoverMakerApp:
             image = load_image_from_url(candidate.cover_url)
             self.root.after(0, lambda: self._set_source_image(image, candidate.label))
         except Exception as exc:
-            self.root.after(0, lambda: self._cover_error(str(exc)))
+            detail = str(exc)
+            self.root.after(0, lambda detail=detail: self._cover_error(detail))
 
     def _cover_error(self, detail: str) -> None:
         self.set_busy(False, "封面加载失败，请尝试其他结果")
@@ -541,7 +622,8 @@ class CoverMakerApp:
             image = load_image_from_url(url)
             self.root.after(0, lambda: self._set_source_image(image, "剪贴板封面链接"))
         except Exception as exc:
-            self.root.after(0, lambda: self._cover_error(str(exc)))
+            detail = describe_url_error(url, exc)
+            self.root.after(0, lambda detail=detail: self._cover_error(detail))
 
     def processed_image(self) -> Image.Image:
         if self.source_image is None:

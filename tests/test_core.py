@@ -1,4 +1,5 @@
 import unittest
+import urllib.error
 
 from PIL import Image
 
@@ -27,6 +28,18 @@ class CoreTests(unittest.TestCase):
 
     def test_safe_filename(self):
         self.assertEqual(app.safe_filename('A:B/C?'), "A_B_C_")
+
+    def test_douban_direct_link_error_is_actionable(self):
+        error = urllib.error.HTTPError(
+            "https://img9.doubanio.com/cover.jpg", 418, "I'm a Teapot", {}, None
+        )
+        try:
+            message = app.describe_url_error(error.url, error)
+        finally:
+            error.close()
+        self.assertIn("HTTP 418", message)
+        self.assertIn("复制图片", message)
+        self.assertIn("复制图片链接", message)
 
 
 if __name__ == "__main__":
