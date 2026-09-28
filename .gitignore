@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+dist/
+*.spec
+startup_error.log
+生成的屏保/
+.idea/
+.vscode/
+.tools/
