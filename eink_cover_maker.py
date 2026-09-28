@@ -19,7 +19,7 @@ from tkinter import ttk
 from PIL import Image, ImageEnhance, ImageFilter, ImageGrab, ImageOps, ImageTk
 
 
-APP_TITLE = "墨水屏封面屏保"
+APP_TITLE = "墨水屏封面屏保（公开版）"
 DEFAULT_SCREEN_SIZE = (1264, 1680)
 USER_AGENT = "InkScreenCoverMaker/1.0 (low-volume human-initiated desktop search)"
 OUTPUT_DIR = Path(__file__).resolve().parent / "生成的屏保"
@@ -290,7 +290,11 @@ class CoverMakerApp:
         outer = ttk.Frame(self.root, padding=20)
         outer.pack(fill="both", expand=True)
 
-        ttk.Label(outer, text="把最近读的书，变成墨水屏屏保", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(
+            outer,
+            text="把最近读的书，变成墨水屏屏保 · 公开版",
+            style="Title.TLabel",
+        ).pack(anchor="w")
         ttk.Label(
             outer,
             textvariable=self.device_summary,
